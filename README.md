@@ -1,1 +1,1 @@
-# AI_spectogram
+# AI_project

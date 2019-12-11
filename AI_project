@@ -1,0 +1,1207 @@
+{
+  "nbformat": 4,
+  "nbformat_minor": 0,
+  "metadata": {
+    "colab": {
+      "name": "Untitled6.ipynb",
+      "provenance": []
+    },
+    "kernelspec": {
+      "name": "python3",
+      "display_name": "Python 3"
+    }
+  },
+  "cells": [
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "_6E63As1gMMj",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "!wget https://mpp0xc0ae45ef.blob.core.windows.net/drivendata-mpp-storage/data/19/public/data-release.zip\n",
+        "\n",
+        "!unzip -o data-release.zip"
+      ],
+      "execution_count": 0,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "fH0JhtPxgEua",
+        "colab_type": "code",
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 80
+        },
+        "outputId": "78ed5881-a4db-4c16-d90a-dde207b6e8e2"
+      },
+      "source": [
+        "import pandas as pd\n",
+        "import numpy as np\n",
+        "from skimage.io import imread\n",
+        "from sklearn.model_selection import train_test_split\n",
+        "from matplotlib import pyplot as plt\n",
+        "%matplotlib inline\n",
+        "\n",
+        "import keras\n",
+        "from keras import optimizers\n",
+        "from keras.utils import to_categorical\n",
+        "from keras.layers import Input, Dense, Flatten, Dropout, Conv2D, MaxPooling2D, GlobalAveragePooling2D, Activation, concatenate\n",
+        "from keras.layers.advanced_activations import LeakyReLU\n",
+        "from keras.layers.normalization import BatchNormalization\n",
+        "from keras.models import Model\n",
+        "from keras.callbacks import ModelCheckpoint, ReduceLROnPlateau"
+      ],
+      "execution_count": 2,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "text": [
+            "Using TensorFlow backend.\n"
+          ],
+          "name": "stderr"
+        },
+        {
+          "output_type": "display_data",
+          "data": {
+            "text/html": [
+              "<p style=\"color: red;\">\n",
+              "The default version of TensorFlow in Colab will soon switch to TensorFlow 2.x.<br>\n",
+              "We recommend you <a href=\"https://www.tensorflow.org/guide/migrate\" target=\"_blank\">upgrade</a> now \n",
+              "or ensure your notebook will continue to use TensorFlow 1.x via the <code>%tensorflow_version 1.x</code> magic:\n",
+              "<a href=\"https://colab.research.google.com/notebooks/tensorflow_version.ipynb\" target=\"_blank\">more info</a>.</p>\n"
+            ],
+            "text/plain": [
+              "<IPython.core.display.HTML object>"
+            ]
+          },
+          "metadata": {
+            "tags": []
+          }
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "2TqsXsx7gSBa",
+        "colab_type": "code",
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 136
+        },
+        "outputId": "7cf0a323-f530-441e-dd15-13be6e406968"
+      },
+      "source": [
+        "train_df = pd.read_csv('train_labels.csv', index_col=0)\n",
+        "\n",
+        "train_df['current_file'] = train_df.index.map(lambda id: f'train/{id}_c.png')\n",
+        "train_df['voltage_file'] = train_df.index.map(lambda id: f'train/{id}_v.png')\n",
+        "\n",
+        "print(train_df.head())"
+      ],
+      "execution_count": 3,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "text": [
+            "      appliance      current_file      voltage_file\n",
+            "id                                                 \n",
+            "1000          4  train/1000_c.png  train/1000_v.png\n",
+            "1001          9  train/1001_c.png  train/1001_v.png\n",
+            "1002          4  train/1002_c.png  train/1002_v.png\n",
+            "1003          9  train/1003_c.png  train/1003_v.png\n",
+            "1004          6  train/1004_c.png  train/1004_v.png\n"
+          ],
+          "name": "stdout"
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "oE0lzAR-ga1Q",
+        "colab_type": "text"
+      },
+      "source": [
+        "Helper Function"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "JQi-HoEtgdI8",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "def read_spectograms(file_paths, img_rows, img_cols, as_gray, channels):\n",
+        "  \"\"\"\n",
+        "  Reads the spectogram files from disk and normalizes the pixel values\n",
+        "    @params:\n",
+        "      file_paths - Array of file paths to read from\n",
+        "      img_rows - The image height.\n",
+        "      img_cols - The image width.\n",
+        "      as_grey - Read the image as Greyscale or RGB.\n",
+        "      channels - Number of channels.\n",
+        "    @returns:\n",
+        "      The created and compiled model (Model)        \n",
+        "  \"\"\"\n",
+        "  images = []\n",
+        "  \n",
+        "  for file_path in file_paths:\n",
+        "    images.append(imread(file_path, as_grey = as_gray))\n",
+        "  \n",
+        "  images = np.asarray(images, dtype=np.float32)\n",
+        "  \n",
+        "  # normalize\n",
+        "  images = images / np.max(images)\n",
+        "  \n",
+        "  # reshape to match Keras expectaions\n",
+        "  #images = images.reshape(images.shape[0], img_rows, img_cols, channels)\n",
+        "  images = images.reshape(images.shape[0], img_rows, img_cols, channels)\n",
+        "\n",
+        "  return images"
+      ],
+      "execution_count": 0,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "Nd2Gn4M9gkVo",
+        "colab_type": "text"
+      },
+      "source": [
+        "Parameters\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "9xfB8tV7gk8s",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "as_gray = True\n",
+        "in_channel = 4\n",
+        "\n",
+        "if as_gray:\n",
+        "  in_channel = 1\n",
+        "\n",
+        "img_rows, img_cols = 128, 176\n",
+        "num_classes = 11 # number of appliances\n",
+        "\n",
+        "batch_size = 32\n",
+        "epochs = 100\n",
+        "input_shape = (img_rows, img_cols, in_channel)\n",
+        "input_img = Input(shape = input_shape)"
+      ],
+      "execution_count": 0,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "WzebWYz9gm5T",
+        "colab_type": "text"
+      },
+      "source": [
+        "Current files\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "aCK82_udguv1",
+        "colab_type": "code",
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 51
+        },
+        "outputId": "53884996-c883-45ad-c4fe-a3db44a09cec"
+      },
+      "source": [
+        "x_train_current = read_spectograms(train_df.current_file.values, img_rows, img_cols, as_gray, in_channel)"
+      ],
+      "execution_count": 25,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "text": [
+            "/usr/local/lib/python3.6/dist-packages/skimage/io/_io.py:48: UserWarning: `as_grey` has been deprecated in favor of `as_gray`\n",
+            "  warn('`as_grey` has been deprecated in favor of `as_gray`')\n"
+          ],
+          "name": "stderr"
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "KzAol9tngv2A",
+        "colab_type": "text"
+      },
+      "source": [
+        "Voltage files"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "kPf-cZLMgwC4",
+        "colab_type": "code",
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 51
+        },
+        "outputId": "ebca0c20-7d01-473f-e011-5ae05a495285"
+      },
+      "source": [
+        "x_train_voltage = read_spectograms(train_df.voltage_file.values, img_rows, img_cols, as_gray, in_channel)"
+      ],
+      "execution_count": 26,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "text": [
+            "/usr/local/lib/python3.6/dist-packages/skimage/io/_io.py:48: UserWarning: `as_grey` has been deprecated in favor of `as_gray`\n",
+            "  warn('`as_grey` has been deprecated in favor of `as_gray`')\n"
+          ],
+          "name": "stderr"
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "9_NUxfV0g4mu",
+        "colab_type": "text"
+      },
+      "source": [
+        "Labels\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "tKu9vDnSg43R",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "labels = train_df.appliance.values\n",
+        "\n",
+        "# convert class vectors to binary class matrices One Hot Encoding\n",
+        "labels = keras.utils.to_categorical(labels, num_classes)"
+      ],
+      "execution_count": 0,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "33LeFAMbg_88",
+        "colab_type": "text"
+      },
+      "source": [
+        "Show Data"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "uACzO0bohAR1",
+        "colab_type": "code",
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 227
+        },
+        "outputId": "aaf15b5a-cf13-4ad4-c022-504d8aa9d708"
+      },
+      "source": [
+        "appliances = [\n",
+        "    'Compact Fluorescent Lamp', \n",
+        "    'Hairdryer', \n",
+        "    'Microwave', \n",
+        "    'Air Conditioner', \n",
+        "    'Fridge', \n",
+        "    'Laptop', \n",
+        "    'Vacuum', \n",
+        "    'Incandescent Light Bulb', \n",
+        "    'Fan',\n",
+        "    'Washing Machine',\n",
+        "    'Heater'\n",
+        "]\n",
+        "\n",
+        "# pick a random index from the list\n",
+        "rn_appliance = np.random.choice(train_df.appliance.values)\n",
+        "rn_label = train_df.appliance.values[rn_appliance]\n",
+        "rn_current = x_train_current[rn_appliance]\n",
+        "rn_voltage = x_train_voltage[rn_appliance]\n",
+        "\n",
+        "plt.figure()\n",
+        "plt.axis('off')\n",
+        "\n",
+        "plt.suptitle(f\"{appliances[rn_label]} (Label: {rn_label})\", fontsize=\"x-large\")\n",
+        "\n",
+        "plt.subplot(121)\n",
+        "curr_img = None\n",
+        "if as_gray:\n",
+        "  curr_img = np.reshape(rn_current, (img_rows, img_cols))\n",
+        "else:\n",
+        "  curr_img = np.reshape(rn_current, (img_rows, img_cols, in_channel))\n",
+        "\n",
+        "plt.imshow(curr_img, cmap='gray')\n",
+        "plt.title(\"Current\")\n",
+        "plt.xticks([])\n",
+        "plt.yticks([])\n",
+        "\n",
+        "plt.subplot(122)\n",
+        "if as_gray:\n",
+        "  curr_img = np.reshape(rn_voltage, (img_rows, img_cols))\n",
+        "else:\n",
+        "  curr_img = np.reshape(rn_voltage, (img_rows, img_cols, in_channel))\n",
+        "\n",
+        "plt.imshow(curr_img, cmap='gray')\n",
+        "plt.title(\"Voltage\")\n",
+        "plt.xticks([])\n",
+        "plt.yticks([])\n",
+        "plt.show()"
+      ],
+      "execution_count": 28,
+      "outputs": [
+        {
+          "output_type": "display_data",
+          "data": {
+            "image/png": "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\nTmPBUEzOAAAAAElFTkSuQmCC\n",
+            "text/plain": [
+              "<Figure size 432x288 with 2 Axes>"
+            ]
+          },
+          "metadata": {
+            "tags": []
+          }
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "qgAvabDchHcd",
+        "colab_type": "text"
+      },
+      "source": [
+        "Create and Train Model"
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "tmpzDsTBhAoW",
+        "colab_type": "text"
+      },
+      "source": [
+        "Split in train and train batches"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "abVSTonVhvZA",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "# stack so we can split on the same pair of images\n",
+        "x_train_comp = np.stack((x_train_current, x_train_voltage), axis=4)\n",
+        "\n",
+        "x_train, x_test, y_train, y_test = train_test_split(x_train_comp, labels, test_size = 0.3, random_state=666)\n",
+        "\n",
+        "# take them apart\n",
+        "x_train_current = x_train[:,:,:,:,0]\n",
+        "x_test_current = x_test[:,:,:,:,0]\n",
+        "\n",
+        "x_train_voltage = x_train[:,:,:,:,1]\n",
+        "x_test_voltage = x_test[:,:,:,:,1]"
+      ],
+      "execution_count": 0,
+      "outputs": []
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "zX9frIAEhwkk",
+        "colab_type": "text"
+      },
+      "source": [
+        "Create the Model\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "xrLHTmdKh9Fb",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "def create_convolution_layers(input_img):\n",
+        "  model = Conv2D(32, (3, 3), padding='same', input_shape=input_shape)(input_img)\n",
+        "  model = LeakyReLU(alpha=0.1)(model)\n",
+        "  model = MaxPooling2D((2, 2),padding='same')(model)\n",
+        "  model = Dropout(0.25)(model)\n",
+        "  \n",
+        "  model = Conv2D(64, (3, 3), padding='same')(model)\n",
+        "  model = LeakyReLU(alpha=0.1)(model)\n",
+        "  model = MaxPooling2D(pool_size=(2, 2),padding='same')(model)\n",
+        "  model = Dropout(0.25)(model)\n",
+        "    \n",
+        "  model = Conv2D(128, (3, 3), padding='same')(model)\n",
+        "  model = LeakyReLU(alpha=0.1)(model)\n",
+        "  model = MaxPooling2D(pool_size=(2, 2),padding='same')(model)\n",
+        "  model = Dropout(0.4)(model)\n",
+        "    \n",
+        "  return model"
+      ],
+      "execution_count": 0,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "rmI-xdzYh95z",
+        "colab_type": "code",
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 1000
+        },
+        "outputId": "67e3929a-173b-43df-c4a9-d2d099d90bd4"
+      },
+      "source": [
+        "current_input = Input(shape=input_shape)\n",
+        "current_model = create_convolution_layers(current_input)\n",
+        "\n",
+        "voltage_input = Input(shape=input_shape)\n",
+        "voltage_model = create_convolution_layers(voltage_input)\n",
+        "\n",
+        "conv = concatenate([current_model, voltage_model])\n",
+        "\n",
+        "conv = Flatten()(conv)\n",
+        "\n",
+        "dense = Dense(512)(conv)\n",
+        "dense = LeakyReLU(alpha=0.1)(dense)\n",
+        "dense = Dropout(0.5)(dense)\n",
+        "\n",
+        "output = Dense(num_classes, activation='softmax')(dense)\n",
+        "\n",
+        "model = Model(inputs=[current_input, voltage_input], outputs=[output])\n",
+        "\n",
+        "opt = optimizers.Adam()\n",
+        "\n",
+        "model.compile(loss='categorical_crossentropy',\n",
+        "              optimizer=opt,\n",
+        "              metrics=['accuracy'])\n",
+        "\n",
+        "print(model.summary())"
+      ],
+      "execution_count": 31,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "text": [
+            "WARNING:tensorflow:From /usr/local/lib/python3.6/dist-packages/keras/backend/tensorflow_backend.py:4432: The name tf.random_uniform is deprecated. Please use tf.random.uniform instead.\n",
+            "\n",
+            "WARNING:tensorflow:From /usr/local/lib/python3.6/dist-packages/keras/backend/tensorflow_backend.py:4267: The name tf.nn.max_pool is deprecated. Please use tf.nn.max_pool2d instead.\n",
+            "\n",
+            "WARNING:tensorflow:From /usr/local/lib/python3.6/dist-packages/keras/backend/tensorflow_backend.py:148: The name tf.placeholder_with_default is deprecated. Please use tf.compat.v1.placeholder_with_default instead.\n",
+            "\n",
+            "WARNING:tensorflow:From /usr/local/lib/python3.6/dist-packages/keras/backend/tensorflow_backend.py:3733: calling dropout (from tensorflow.python.ops.nn_ops) with keep_prob is deprecated and will be removed in a future version.\n",
+            "Instructions for updating:\n",
+            "Please use `rate` instead of `keep_prob`. Rate should be set to `rate = 1 - keep_prob`.\n",
+            "WARNING:tensorflow:From /usr/local/lib/python3.6/dist-packages/keras/optimizers.py:793: The name tf.train.Optimizer is deprecated. Please use tf.compat.v1.train.Optimizer instead.\n",
+            "\n",
+            "WARNING:tensorflow:From /usr/local/lib/python3.6/dist-packages/keras/backend/tensorflow_backend.py:3576: The name tf.log is deprecated. Please use tf.math.log instead.\n",
+            "\n",
+            "Model: \"model_1\"\n",
+            "__________________________________________________________________________________________________\n",
+            "Layer (type)                    Output Shape         Param #     Connected to                     \n",
+            "==================================================================================================\n",
+            "input_10 (InputLayer)           (None, 128, 176, 1)  0                                            \n",
+            "__________________________________________________________________________________________________\n",
+            "input_11 (InputLayer)           (None, 128, 176, 1)  0                                            \n",
+            "__________________________________________________________________________________________________\n",
+            "conv2d_1 (Conv2D)               (None, 128, 176, 32) 320         input_10[0][0]                   \n",
+            "__________________________________________________________________________________________________\n",
+            "conv2d_4 (Conv2D)               (None, 128, 176, 32) 320         input_11[0][0]                   \n",
+            "__________________________________________________________________________________________________\n",
+            "leaky_re_lu_1 (LeakyReLU)       (None, 128, 176, 32) 0           conv2d_1[0][0]                   \n",
+            "__________________________________________________________________________________________________\n",
+            "leaky_re_lu_4 (LeakyReLU)       (None, 128, 176, 32) 0           conv2d_4[0][0]                   \n",
+            "__________________________________________________________________________________________________\n",
+            "max_pooling2d_1 (MaxPooling2D)  (None, 64, 88, 32)   0           leaky_re_lu_1[0][0]              \n",
+            "__________________________________________________________________________________________________\n",
+            "max_pooling2d_4 (MaxPooling2D)  (None, 64, 88, 32)   0           leaky_re_lu_4[0][0]              \n",
+            "__________________________________________________________________________________________________\n",
+            "dropout_1 (Dropout)             (None, 64, 88, 32)   0           max_pooling2d_1[0][0]            \n",
+            "__________________________________________________________________________________________________\n",
+            "dropout_4 (Dropout)             (None, 64, 88, 32)   0           max_pooling2d_4[0][0]            \n",
+            "__________________________________________________________________________________________________\n",
+            "conv2d_2 (Conv2D)               (None, 64, 88, 64)   18496       dropout_1[0][0]                  \n",
+            "__________________________________________________________________________________________________\n",
+            "conv2d_5 (Conv2D)               (None, 64, 88, 64)   18496       dropout_4[0][0]                  \n",
+            "__________________________________________________________________________________________________\n",
+            "leaky_re_lu_2 (LeakyReLU)       (None, 64, 88, 64)   0           conv2d_2[0][0]                   \n",
+            "__________________________________________________________________________________________________\n",
+            "leaky_re_lu_5 (LeakyReLU)       (None, 64, 88, 64)   0           conv2d_5[0][0]                   \n",
+            "__________________________________________________________________________________________________\n",
+            "max_pooling2d_2 (MaxPooling2D)  (None, 32, 44, 64)   0           leaky_re_lu_2[0][0]              \n",
+            "__________________________________________________________________________________________________\n",
+            "max_pooling2d_5 (MaxPooling2D)  (None, 32, 44, 64)   0           leaky_re_lu_5[0][0]              \n",
+            "__________________________________________________________________________________________________\n",
+            "dropout_2 (Dropout)             (None, 32, 44, 64)   0           max_pooling2d_2[0][0]            \n",
+            "__________________________________________________________________________________________________\n",
+            "dropout_5 (Dropout)             (None, 32, 44, 64)   0           max_pooling2d_5[0][0]            \n",
+            "__________________________________________________________________________________________________\n",
+            "conv2d_3 (Conv2D)               (None, 32, 44, 128)  73856       dropout_2[0][0]                  \n",
+            "__________________________________________________________________________________________________\n",
+            "conv2d_6 (Conv2D)               (None, 32, 44, 128)  73856       dropout_5[0][0]                  \n",
+            "__________________________________________________________________________________________________\n",
+            "leaky_re_lu_3 (LeakyReLU)       (None, 32, 44, 128)  0           conv2d_3[0][0]                   \n",
+            "__________________________________________________________________________________________________\n",
+            "leaky_re_lu_6 (LeakyReLU)       (None, 32, 44, 128)  0           conv2d_6[0][0]                   \n",
+            "__________________________________________________________________________________________________\n",
+            "max_pooling2d_3 (MaxPooling2D)  (None, 16, 22, 128)  0           leaky_re_lu_3[0][0]              \n",
+            "__________________________________________________________________________________________________\n",
+            "max_pooling2d_6 (MaxPooling2D)  (None, 16, 22, 128)  0           leaky_re_lu_6[0][0]              \n",
+            "__________________________________________________________________________________________________\n",
+            "dropout_3 (Dropout)             (None, 16, 22, 128)  0           max_pooling2d_3[0][0]            \n",
+            "__________________________________________________________________________________________________\n",
+            "dropout_6 (Dropout)             (None, 16, 22, 128)  0           max_pooling2d_6[0][0]            \n",
+            "__________________________________________________________________________________________________\n",
+            "concatenate_1 (Concatenate)     (None, 16, 22, 256)  0           dropout_3[0][0]                  \n",
+            "                                                                 dropout_6[0][0]                  \n",
+            "__________________________________________________________________________________________________\n",
+            "flatten_1 (Flatten)             (None, 90112)        0           concatenate_1[0][0]              \n",
+            "__________________________________________________________________________________________________\n",
+            "dense_1 (Dense)                 (None, 512)          46137856    flatten_1[0][0]                  \n",
+            "__________________________________________________________________________________________________\n",
+            "leaky_re_lu_7 (LeakyReLU)       (None, 512)          0           dense_1[0][0]                    \n",
+            "__________________________________________________________________________________________________\n",
+            "dropout_7 (Dropout)             (None, 512)          0           leaky_re_lu_7[0][0]              \n",
+            "__________________________________________________________________________________________________\n",
+            "dense_2 (Dense)                 (None, 11)           5643        dropout_7[0][0]                  \n",
+            "==================================================================================================\n",
+            "Total params: 46,328,843\n",
+            "Trainable params: 46,328,843\n",
+            "Non-trainable params: 0\n",
+            "__________________________________________________________________________________________________\n",
+            "None\n"
+          ],
+          "name": "stdout"
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "brN2lro6iHJH",
+        "colab_type": "text"
+      },
+      "source": [
+        "Train Model"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "dVuOxv5piJZe",
+        "colab_type": "code",
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 1000
+        },
+        "outputId": "4d8ca910-83b9-4679-bab8-2f20ddc63105"
+      },
+      "source": [
+        "best_weights_file=\"weights.best.hdf5\"\n",
+        "checkpoint = ModelCheckpoint(best_weights_file, monitor='val_acc', verbose=1, save_best_only=True, mode='max')\n",
+        "#lr_reducer = ReduceLROnPlateau(verbose=1)\n",
+        "\n",
+        "callbacks = [checkpoint]\n",
+        "\n",
+        "model.fit([x_train_current, x_train_voltage], y_train,\n",
+        "          batch_size=batch_size,\n",
+        "          epochs=epochs,\n",
+        "          callbacks=callbacks,\n",
+        "          verbose=1,\n",
+        "          validation_data=([x_test_current, x_test_voltage], y_test),\n",
+        "          shuffle=True)"
+      ],
+      "execution_count": 32,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "text": [
+            "WARNING:tensorflow:From /usr/local/lib/python3.6/dist-packages/tensorflow_core/python/ops/math_grad.py:1424: where (from tensorflow.python.ops.array_ops) is deprecated and will be removed in a future version.\n",
+            "Instructions for updating:\n",
+            "Use tf.where in 2.0, which has the same broadcast rule as np.where\n",
+            "WARNING:tensorflow:From /usr/local/lib/python3.6/dist-packages/keras/backend/tensorflow_backend.py:1033: The name tf.assign_add is deprecated. Please use tf.compat.v1.assign_add instead.\n",
+            "\n",
+            "WARNING:tensorflow:From /usr/local/lib/python3.6/dist-packages/keras/backend/tensorflow_backend.py:1020: The name tf.assign is deprecated. Please use tf.compat.v1.assign instead.\n",
+            "\n",
+            "WARNING:tensorflow:From /usr/local/lib/python3.6/dist-packages/keras/backend/tensorflow_backend.py:3005: The name tf.Session is deprecated. Please use tf.compat.v1.Session instead.\n",
+            "\n",
+            "Train on 403 samples, validate on 173 samples\n",
+            "Epoch 1/100\n",
+            "WARNING:tensorflow:From /usr/local/lib/python3.6/dist-packages/keras/backend/tensorflow_backend.py:190: The name tf.get_default_session is deprecated. Please use tf.compat.v1.get_default_session instead.\n",
+            "\n",
+            "WARNING:tensorflow:From /usr/local/lib/python3.6/dist-packages/keras/backend/tensorflow_backend.py:197: The name tf.ConfigProto is deprecated. Please use tf.compat.v1.ConfigProto instead.\n",
+            "\n",
+            "WARNING:tensorflow:From /usr/local/lib/python3.6/dist-packages/keras/backend/tensorflow_backend.py:207: The name tf.global_variables is deprecated. Please use tf.compat.v1.global_variables instead.\n",
+            "\n",
+            "WARNING:tensorflow:From /usr/local/lib/python3.6/dist-packages/keras/backend/tensorflow_backend.py:216: The name tf.is_variable_initialized is deprecated. Please use tf.compat.v1.is_variable_initialized instead.\n",
+            "\n",
+            "WARNING:tensorflow:From /usr/local/lib/python3.6/dist-packages/keras/backend/tensorflow_backend.py:223: The name tf.variables_initializer is deprecated. Please use tf.compat.v1.variables_initializer instead.\n",
+            "\n",
+            "403/403 [==============================] - 61s 152ms/step - loss: 2.6333 - acc: 0.2506 - val_loss: 2.0548 - val_acc: 0.2543\n",
+            "\n",
+            "Epoch 00001: val_acc improved from -inf to 0.25434, saving model to weights.best.hdf5\n",
+            "Epoch 2/100\n",
+            "403/403 [==============================] - 54s 134ms/step - loss: 1.5598 - acc: 0.4764 - val_loss: 1.5833 - val_acc: 0.5145\n",
+            "\n",
+            "Epoch 00002: val_acc improved from 0.25434 to 0.51445, saving model to weights.best.hdf5\n",
+            "Epoch 3/100\n",
+            "403/403 [==============================] - 53s 132ms/step - loss: 1.2600 - acc: 0.6055 - val_loss: 1.3125 - val_acc: 0.5434\n",
+            "\n",
+            "Epoch 00003: val_acc improved from 0.51445 to 0.54335, saving model to weights.best.hdf5\n",
+            "Epoch 4/100\n",
+            "403/403 [==============================] - 53s 132ms/step - loss: 1.0290 - acc: 0.6675 - val_loss: 1.5502 - val_acc: 0.5145\n",
+            "\n",
+            "Epoch 00004: val_acc did not improve from 0.54335\n",
+            "Epoch 5/100\n",
+            "403/403 [==============================] - 53s 131ms/step - loss: 0.8089 - acc: 0.7246 - val_loss: 0.9413 - val_acc: 0.6994\n",
+            "\n",
+            "Epoch 00005: val_acc improved from 0.54335 to 0.69942, saving model to weights.best.hdf5\n",
+            "Epoch 6/100\n",
+            "403/403 [==============================] - 54s 134ms/step - loss: 0.7110 - acc: 0.7717 - val_loss: 0.9128 - val_acc: 0.7514\n",
+            "\n",
+            "Epoch 00006: val_acc improved from 0.69942 to 0.75145, saving model to weights.best.hdf5\n",
+            "Epoch 7/100\n",
+            "403/403 [==============================] - 54s 133ms/step - loss: 0.5899 - acc: 0.8213 - val_loss: 0.7607 - val_acc: 0.7399\n",
+            "\n",
+            "Epoch 00007: val_acc did not improve from 0.75145\n",
+            "Epoch 8/100\n",
+            "403/403 [==============================] - 53s 131ms/step - loss: 0.5750 - acc: 0.8114 - val_loss: 0.7557 - val_acc: 0.7803\n",
+            "\n",
+            "Epoch 00008: val_acc improved from 0.75145 to 0.78035, saving model to weights.best.hdf5\n",
+            "Epoch 9/100\n",
+            "403/403 [==============================] - 53s 132ms/step - loss: 0.3945 - acc: 0.8610 - val_loss: 0.7711 - val_acc: 0.7572\n",
+            "\n",
+            "Epoch 00009: val_acc did not improve from 0.78035\n",
+            "Epoch 10/100\n",
+            "403/403 [==============================] - 54s 133ms/step - loss: 0.3593 - acc: 0.8784 - val_loss: 0.7951 - val_acc: 0.7514\n",
+            "\n",
+            "Epoch 00010: val_acc did not improve from 0.78035\n",
+            "Epoch 11/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.2633 - acc: 0.9132 - val_loss: 0.7363 - val_acc: 0.7803\n",
+            "\n",
+            "Epoch 00011: val_acc did not improve from 0.78035\n",
+            "Epoch 12/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.2612 - acc: 0.8908 - val_loss: 0.7509 - val_acc: 0.7803\n",
+            "\n",
+            "Epoch 00012: val_acc did not improve from 0.78035\n",
+            "Epoch 13/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.2325 - acc: 0.9132 - val_loss: 0.7529 - val_acc: 0.7803\n",
+            "\n",
+            "Epoch 00013: val_acc did not improve from 0.78035\n",
+            "Epoch 14/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.2401 - acc: 0.9206 - val_loss: 0.7722 - val_acc: 0.7919\n",
+            "\n",
+            "Epoch 00014: val_acc improved from 0.78035 to 0.79191, saving model to weights.best.hdf5\n",
+            "Epoch 15/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.1754 - acc: 0.9479 - val_loss: 0.6989 - val_acc: 0.7861\n",
+            "\n",
+            "Epoch 00015: val_acc did not improve from 0.79191\n",
+            "Epoch 16/100\n",
+            "403/403 [==============================] - 53s 132ms/step - loss: 0.1784 - acc: 0.9479 - val_loss: 0.6856 - val_acc: 0.8035\n",
+            "\n",
+            "Epoch 00016: val_acc improved from 0.79191 to 0.80347, saving model to weights.best.hdf5\n",
+            "Epoch 17/100\n",
+            "403/403 [==============================] - 53s 132ms/step - loss: 0.1516 - acc: 0.9529 - val_loss: 0.8288 - val_acc: 0.7514\n",
+            "\n",
+            "Epoch 00017: val_acc did not improve from 0.80347\n",
+            "Epoch 18/100\n",
+            "403/403 [==============================] - 53s 130ms/step - loss: 0.0844 - acc: 0.9727 - val_loss: 0.6700 - val_acc: 0.8035\n",
+            "\n",
+            "Epoch 00018: val_acc improved from 0.80347 to 0.80347, saving model to weights.best.hdf5\n",
+            "Epoch 19/100\n",
+            "403/403 [==============================] - 53s 133ms/step - loss: 0.1336 - acc: 0.9553 - val_loss: 0.9594 - val_acc: 0.7630\n",
+            "\n",
+            "Epoch 00019: val_acc did not improve from 0.80347\n",
+            "Epoch 20/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.1922 - acc: 0.9355 - val_loss: 0.9410 - val_acc: 0.7919\n",
+            "\n",
+            "Epoch 00020: val_acc did not improve from 0.80347\n",
+            "Epoch 21/100\n",
+            "403/403 [==============================] - 54s 133ms/step - loss: 0.1513 - acc: 0.9504 - val_loss: 0.9685 - val_acc: 0.7630\n",
+            "\n",
+            "Epoch 00021: val_acc did not improve from 0.80347\n",
+            "Epoch 22/100\n",
+            "403/403 [==============================] - 53s 130ms/step - loss: 0.1583 - acc: 0.9404 - val_loss: 1.1952 - val_acc: 0.7283\n",
+            "\n",
+            "Epoch 00022: val_acc did not improve from 0.80347\n",
+            "Epoch 23/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.0893 - acc: 0.9727 - val_loss: 0.9249 - val_acc: 0.8092\n",
+            "\n",
+            "Epoch 00023: val_acc improved from 0.80347 to 0.80925, saving model to weights.best.hdf5\n",
+            "Epoch 24/100\n",
+            "403/403 [==============================] - 53s 131ms/step - loss: 0.0873 - acc: 0.9677 - val_loss: 0.9240 - val_acc: 0.8035\n",
+            "\n",
+            "Epoch 00024: val_acc did not improve from 0.80925\n",
+            "Epoch 25/100\n",
+            "403/403 [==============================] - 53s 130ms/step - loss: 0.0472 - acc: 0.9901 - val_loss: 0.9172 - val_acc: 0.8092\n",
+            "\n",
+            "Epoch 00025: val_acc did not improve from 0.80925\n",
+            "Epoch 26/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.0311 - acc: 0.9826 - val_loss: 0.9415 - val_acc: 0.8208\n",
+            "\n",
+            "Epoch 00026: val_acc improved from 0.80925 to 0.82081, saving model to weights.best.hdf5\n",
+            "Epoch 27/100\n",
+            "403/403 [==============================] - 53s 132ms/step - loss: 0.0847 - acc: 0.9677 - val_loss: 1.1283 - val_acc: 0.7457\n",
+            "\n",
+            "Epoch 00027: val_acc did not improve from 0.82081\n",
+            "Epoch 28/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.1115 - acc: 0.9702 - val_loss: 1.0567 - val_acc: 0.8208\n",
+            "\n",
+            "Epoch 00028: val_acc improved from 0.82081 to 0.82081, saving model to weights.best.hdf5\n",
+            "Epoch 29/100\n",
+            "403/403 [==============================] - 55s 136ms/step - loss: 0.0974 - acc: 0.9653 - val_loss: 0.7451 - val_acc: 0.8324\n",
+            "\n",
+            "Epoch 00029: val_acc improved from 0.82081 to 0.83237, saving model to weights.best.hdf5\n",
+            "Epoch 30/100\n",
+            "403/403 [==============================] - 53s 130ms/step - loss: 0.0914 - acc: 0.9628 - val_loss: 1.0423 - val_acc: 0.7688\n",
+            "\n",
+            "Epoch 00030: val_acc did not improve from 0.83237\n",
+            "Epoch 31/100\n",
+            "403/403 [==============================] - 52s 129ms/step - loss: 0.1166 - acc: 0.9727 - val_loss: 0.8601 - val_acc: 0.8266\n",
+            "\n",
+            "Epoch 00031: val_acc did not improve from 0.83237\n",
+            "Epoch 32/100\n",
+            "403/403 [==============================] - 52s 129ms/step - loss: 0.0583 - acc: 0.9801 - val_loss: 0.9615 - val_acc: 0.8266\n",
+            "\n",
+            "Epoch 00032: val_acc did not improve from 0.83237\n",
+            "Epoch 33/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.0681 - acc: 0.9876 - val_loss: 0.9669 - val_acc: 0.7977\n",
+            "\n",
+            "Epoch 00033: val_acc did not improve from 0.83237\n",
+            "Epoch 34/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.1036 - acc: 0.9628 - val_loss: 0.9317 - val_acc: 0.8266\n",
+            "\n",
+            "Epoch 00034: val_acc did not improve from 0.83237\n",
+            "Epoch 35/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.1675 - acc: 0.9603 - val_loss: 1.2469 - val_acc: 0.8035\n",
+            "\n",
+            "Epoch 00035: val_acc did not improve from 0.83237\n",
+            "Epoch 36/100\n",
+            "403/403 [==============================] - 53s 130ms/step - loss: 0.0863 - acc: 0.9702 - val_loss: 0.7541 - val_acc: 0.8728\n",
+            "\n",
+            "Epoch 00036: val_acc improved from 0.83237 to 0.87283, saving model to weights.best.hdf5\n",
+            "Epoch 37/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.0532 - acc: 0.9826 - val_loss: 0.9861 - val_acc: 0.8150\n",
+            "\n",
+            "Epoch 00037: val_acc did not improve from 0.87283\n",
+            "Epoch 38/100\n",
+            "403/403 [==============================] - 52s 129ms/step - loss: 0.0671 - acc: 0.9801 - val_loss: 1.1690 - val_acc: 0.8150\n",
+            "\n",
+            "Epoch 00038: val_acc did not improve from 0.87283\n",
+            "Epoch 39/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.1279 - acc: 0.9603 - val_loss: 1.0356 - val_acc: 0.8324\n",
+            "\n",
+            "Epoch 00039: val_acc did not improve from 0.87283\n",
+            "Epoch 40/100\n",
+            "403/403 [==============================] - 52s 129ms/step - loss: 0.1502 - acc: 0.9553 - val_loss: 1.2288 - val_acc: 0.8266\n",
+            "\n",
+            "Epoch 00040: val_acc did not improve from 0.87283\n",
+            "Epoch 41/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.1463 - acc: 0.9826 - val_loss: 1.3248 - val_acc: 0.7861\n",
+            "\n",
+            "Epoch 00041: val_acc did not improve from 0.87283\n",
+            "Epoch 42/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.1194 - acc: 0.9653 - val_loss: 1.0279 - val_acc: 0.8092\n",
+            "\n",
+            "Epoch 00042: val_acc did not improve from 0.87283\n",
+            "Epoch 43/100\n",
+            "403/403 [==============================] - 52s 129ms/step - loss: 0.0960 - acc: 0.9752 - val_loss: 1.2812 - val_acc: 0.7919\n",
+            "\n",
+            "Epoch 00043: val_acc did not improve from 0.87283\n",
+            "Epoch 44/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.0662 - acc: 0.9801 - val_loss: 1.1009 - val_acc: 0.8035\n",
+            "\n",
+            "Epoch 00044: val_acc did not improve from 0.87283\n",
+            "Epoch 45/100\n",
+            "403/403 [==============================] - 52s 129ms/step - loss: 0.0364 - acc: 0.9901 - val_loss: 1.2732 - val_acc: 0.7688\n",
+            "\n",
+            "Epoch 00045: val_acc did not improve from 0.87283\n",
+            "Epoch 46/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.0559 - acc: 0.9901 - val_loss: 1.0353 - val_acc: 0.8092\n",
+            "\n",
+            "Epoch 00046: val_acc did not improve from 0.87283\n",
+            "Epoch 47/100\n",
+            "403/403 [==============================] - 52s 129ms/step - loss: 0.0387 - acc: 0.9876 - val_loss: 0.8550 - val_acc: 0.8497\n",
+            "\n",
+            "Epoch 00047: val_acc did not improve from 0.87283\n",
+            "Epoch 48/100\n",
+            "403/403 [==============================] - 52s 129ms/step - loss: 0.0374 - acc: 0.9901 - val_loss: 0.8866 - val_acc: 0.8613\n",
+            "\n",
+            "Epoch 00048: val_acc did not improve from 0.87283\n",
+            "Epoch 49/100\n",
+            "403/403 [==============================] - 52s 129ms/step - loss: 0.0509 - acc: 0.9826 - val_loss: 1.0053 - val_acc: 0.8092\n",
+            "\n",
+            "Epoch 00049: val_acc did not improve from 0.87283\n",
+            "Epoch 50/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.0915 - acc: 0.9628 - val_loss: 0.7267 - val_acc: 0.8671\n",
+            "\n",
+            "Epoch 00050: val_acc did not improve from 0.87283\n",
+            "Epoch 51/100\n",
+            "403/403 [==============================] - 53s 132ms/step - loss: 0.0948 - acc: 0.9752 - val_loss: 1.1238 - val_acc: 0.8150\n",
+            "\n",
+            "Epoch 00051: val_acc did not improve from 0.87283\n",
+            "Epoch 52/100\n",
+            "403/403 [==============================] - 53s 133ms/step - loss: 0.0556 - acc: 0.9801 - val_loss: 1.2187 - val_acc: 0.7688\n",
+            "\n",
+            "Epoch 00052: val_acc did not improve from 0.87283\n",
+            "Epoch 53/100\n",
+            "403/403 [==============================] - 54s 133ms/step - loss: 0.0421 - acc: 0.9851 - val_loss: 1.0877 - val_acc: 0.8324\n",
+            "\n",
+            "Epoch 00053: val_acc did not improve from 0.87283\n",
+            "Epoch 54/100\n",
+            "403/403 [==============================] - 54s 133ms/step - loss: 0.0819 - acc: 0.9727 - val_loss: 1.1090 - val_acc: 0.8382\n",
+            "\n",
+            "Epoch 00054: val_acc did not improve from 0.87283\n",
+            "Epoch 55/100\n",
+            "403/403 [==============================] - 55s 135ms/step - loss: 0.0139 - acc: 0.9901 - val_loss: 1.3002 - val_acc: 0.8092\n",
+            "\n",
+            "Epoch 00055: val_acc did not improve from 0.87283\n",
+            "Epoch 56/100\n",
+            "403/403 [==============================] - 58s 143ms/step - loss: 0.0454 - acc: 0.9876 - val_loss: 1.1203 - val_acc: 0.8266\n",
+            "\n",
+            "Epoch 00056: val_acc did not improve from 0.87283\n",
+            "Epoch 57/100\n",
+            "403/403 [==============================] - 57s 141ms/step - loss: 0.0749 - acc: 0.9752 - val_loss: 1.1382 - val_acc: 0.8092\n",
+            "\n",
+            "Epoch 00057: val_acc did not improve from 0.87283\n",
+            "Epoch 58/100\n",
+            "403/403 [==============================] - 54s 135ms/step - loss: 0.0307 - acc: 0.9851 - val_loss: 1.3829 - val_acc: 0.8092\n",
+            "\n",
+            "Epoch 00058: val_acc did not improve from 0.87283\n",
+            "Epoch 59/100\n",
+            "403/403 [==============================] - 55s 138ms/step - loss: 0.0113 - acc: 0.9975 - val_loss: 1.3880 - val_acc: 0.8266\n",
+            "\n",
+            "Epoch 00059: val_acc did not improve from 0.87283\n",
+            "Epoch 60/100\n",
+            "403/403 [==============================] - 54s 134ms/step - loss: 0.0158 - acc: 0.9950 - val_loss: 1.3217 - val_acc: 0.8208\n",
+            "\n",
+            "Epoch 00060: val_acc did not improve from 0.87283\n",
+            "Epoch 61/100\n",
+            "403/403 [==============================] - 54s 135ms/step - loss: 0.0305 - acc: 0.9901 - val_loss: 1.5288 - val_acc: 0.8092\n",
+            "\n",
+            "Epoch 00061: val_acc did not improve from 0.87283\n",
+            "Epoch 62/100\n",
+            "403/403 [==============================] - 54s 133ms/step - loss: 0.1005 - acc: 0.9727 - val_loss: 1.5347 - val_acc: 0.8092\n",
+            "\n",
+            "Epoch 00062: val_acc did not improve from 0.87283\n",
+            "Epoch 63/100\n",
+            "403/403 [==============================] - 56s 139ms/step - loss: 0.0070 - acc: 0.9975 - val_loss: 1.4933 - val_acc: 0.8266\n",
+            "\n",
+            "Epoch 00063: val_acc did not improve from 0.87283\n",
+            "Epoch 64/100\n",
+            "403/403 [==============================] - 57s 141ms/step - loss: 0.0281 - acc: 0.9901 - val_loss: 1.2214 - val_acc: 0.8382\n",
+            "\n",
+            "Epoch 00064: val_acc did not improve from 0.87283\n",
+            "Epoch 65/100\n",
+            "403/403 [==============================] - 53s 132ms/step - loss: 0.0220 - acc: 0.9901 - val_loss: 1.1445 - val_acc: 0.8324\n",
+            "\n",
+            "Epoch 00065: val_acc did not improve from 0.87283\n",
+            "Epoch 66/100\n",
+            "403/403 [==============================] - 54s 134ms/step - loss: 0.0988 - acc: 0.9876 - val_loss: 1.1300 - val_acc: 0.8555\n",
+            "\n",
+            "Epoch 00066: val_acc did not improve from 0.87283\n",
+            "Epoch 67/100\n",
+            "403/403 [==============================] - 53s 132ms/step - loss: 0.0319 - acc: 0.9926 - val_loss: 1.3366 - val_acc: 0.8497\n",
+            "\n",
+            "Epoch 00067: val_acc did not improve from 0.87283\n",
+            "Epoch 68/100\n",
+            "403/403 [==============================] - 53s 132ms/step - loss: 0.0141 - acc: 0.9950 - val_loss: 1.1741 - val_acc: 0.8208\n",
+            "\n",
+            "Epoch 00068: val_acc did not improve from 0.87283\n",
+            "Epoch 69/100\n",
+            "403/403 [==============================] - 53s 131ms/step - loss: 0.0061 - acc: 0.9950 - val_loss: 1.1564 - val_acc: 0.8150\n",
+            "\n",
+            "Epoch 00069: val_acc did not improve from 0.87283\n",
+            "Epoch 70/100\n",
+            "403/403 [==============================] - 53s 133ms/step - loss: 0.0501 - acc: 0.9901 - val_loss: 1.0889 - val_acc: 0.8555\n",
+            "\n",
+            "Epoch 00070: val_acc did not improve from 0.87283\n",
+            "Epoch 71/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.0040 - acc: 0.9975 - val_loss: 1.1313 - val_acc: 0.8382\n",
+            "\n",
+            "Epoch 00071: val_acc did not improve from 0.87283\n",
+            "Epoch 72/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.0168 - acc: 0.9950 - val_loss: 1.1085 - val_acc: 0.8266\n",
+            "\n",
+            "Epoch 00072: val_acc did not improve from 0.87283\n",
+            "Epoch 73/100\n",
+            "403/403 [==============================] - 53s 130ms/step - loss: 0.0129 - acc: 0.9975 - val_loss: 1.0460 - val_acc: 0.8324\n",
+            "\n",
+            "Epoch 00073: val_acc did not improve from 0.87283\n",
+            "Epoch 74/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.0047 - acc: 0.9975 - val_loss: 1.2129 - val_acc: 0.8382\n",
+            "\n",
+            "Epoch 00074: val_acc did not improve from 0.87283\n",
+            "Epoch 75/100\n",
+            "403/403 [==============================] - 53s 131ms/step - loss: 0.0184 - acc: 0.9926 - val_loss: 1.1165 - val_acc: 0.8555\n",
+            "\n",
+            "Epoch 00075: val_acc did not improve from 0.87283\n",
+            "Epoch 76/100\n",
+            "403/403 [==============================] - 53s 131ms/step - loss: 0.0284 - acc: 0.9950 - val_loss: 1.0996 - val_acc: 0.8439\n",
+            "\n",
+            "Epoch 00076: val_acc did not improve from 0.87283\n",
+            "Epoch 77/100\n",
+            "403/403 [==============================] - 55s 136ms/step - loss: 0.0143 - acc: 0.9926 - val_loss: 1.1036 - val_acc: 0.8555\n",
+            "\n",
+            "Epoch 00077: val_acc did not improve from 0.87283\n",
+            "Epoch 78/100\n",
+            "403/403 [==============================] - 53s 131ms/step - loss: 0.0352 - acc: 0.9926 - val_loss: 1.2353 - val_acc: 0.8324\n",
+            "\n",
+            "Epoch 00078: val_acc did not improve from 0.87283\n",
+            "Epoch 79/100\n",
+            "403/403 [==============================] - 53s 131ms/step - loss: 0.0141 - acc: 0.9975 - val_loss: 1.0734 - val_acc: 0.8497\n",
+            "\n",
+            "Epoch 00079: val_acc did not improve from 0.87283\n",
+            "Epoch 80/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.0305 - acc: 0.9901 - val_loss: 1.5742 - val_acc: 0.8497\n",
+            "\n",
+            "Epoch 00080: val_acc did not improve from 0.87283\n",
+            "Epoch 81/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.0298 - acc: 0.9926 - val_loss: 1.1312 - val_acc: 0.8439\n",
+            "\n",
+            "Epoch 00081: val_acc did not improve from 0.87283\n",
+            "Epoch 82/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.0012 - acc: 1.0000 - val_loss: 1.2288 - val_acc: 0.8324\n",
+            "\n",
+            "Epoch 00082: val_acc did not improve from 0.87283\n",
+            "Epoch 83/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.1360 - acc: 0.9801 - val_loss: 1.9280 - val_acc: 0.7977\n",
+            "\n",
+            "Epoch 00083: val_acc did not improve from 0.87283\n",
+            "Epoch 84/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.5124 - acc: 0.9429 - val_loss: 1.6158 - val_acc: 0.8266\n",
+            "\n",
+            "Epoch 00084: val_acc did not improve from 0.87283\n",
+            "Epoch 85/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.3934 - acc: 0.9355 - val_loss: 1.7644 - val_acc: 0.7803\n",
+            "\n",
+            "Epoch 00085: val_acc did not improve from 0.87283\n",
+            "Epoch 86/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 0.8590 - acc: 0.9206 - val_loss: 2.6021 - val_acc: 0.7919\n",
+            "\n",
+            "Epoch 00086: val_acc did not improve from 0.87283\n",
+            "Epoch 87/100\n",
+            "403/403 [==============================] - 53s 131ms/step - loss: 0.8567 - acc: 0.9107 - val_loss: 2.1212 - val_acc: 0.8092\n",
+            "\n",
+            "Epoch 00087: val_acc did not improve from 0.87283\n",
+            "Epoch 88/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 1.3333 - acc: 0.8809 - val_loss: 2.9018 - val_acc: 0.7919\n",
+            "\n",
+            "Epoch 00088: val_acc did not improve from 0.87283\n",
+            "Epoch 89/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 2.4317 - acc: 0.8288 - val_loss: 6.5596 - val_acc: 0.5780\n",
+            "\n",
+            "Epoch 00089: val_acc did not improve from 0.87283\n",
+            "Epoch 90/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 7.1700 - acc: 0.5434 - val_loss: 14.0103 - val_acc: 0.1272\n",
+            "\n",
+            "Epoch 00090: val_acc did not improve from 0.87283\n",
+            "Epoch 91/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 14.3983 - acc: 0.1067 - val_loss: 14.5342 - val_acc: 0.0983\n",
+            "\n",
+            "Epoch 00091: val_acc did not improve from 0.87283\n",
+            "Epoch 92/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 14.2100 - acc: 0.1166 - val_loss: 13.6026 - val_acc: 0.1561\n",
+            "\n",
+            "Epoch 00092: val_acc did not improve from 0.87283\n",
+            "Epoch 93/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 14.0783 - acc: 0.1266 - val_loss: 13.6957 - val_acc: 0.1503\n",
+            "\n",
+            "Epoch 00093: val_acc did not improve from 0.87283\n",
+            "Epoch 94/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 14.0383 - acc: 0.1290 - val_loss: 13.6957 - val_acc: 0.1503\n",
+            "\n",
+            "Epoch 00094: val_acc did not improve from 0.87283\n",
+            "Epoch 95/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 14.1583 - acc: 0.1216 - val_loss: 13.7738 - val_acc: 0.1445\n",
+            "\n",
+            "Epoch 00095: val_acc did not improve from 0.87283\n",
+            "Epoch 96/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 14.2383 - acc: 0.1166 - val_loss: 13.7889 - val_acc: 0.1445\n",
+            "\n",
+            "Epoch 00096: val_acc did not improve from 0.87283\n",
+            "Epoch 97/100\n",
+            "403/403 [==============================] - 52s 129ms/step - loss: 14.0783 - acc: 0.1266 - val_loss: 13.7889 - val_acc: 0.1445\n",
+            "\n",
+            "Epoch 00097: val_acc did not improve from 0.87283\n",
+            "Epoch 98/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 14.9978 - acc: 0.0695 - val_loss: 15.0001 - val_acc: 0.0694\n",
+            "\n",
+            "Epoch 00098: val_acc did not improve from 0.87283\n",
+            "Epoch 99/100\n",
+            "403/403 [==============================] - 52s 129ms/step - loss: 15.2782 - acc: 0.0521 - val_loss: 15.0001 - val_acc: 0.0694\n",
+            "\n",
+            "Epoch 00099: val_acc did not improve from 0.87283\n",
+            "Epoch 100/100\n",
+            "403/403 [==============================] - 52s 130ms/step - loss: 15.2782 - acc: 0.0521 - val_loss: 15.0001 - val_acc: 0.0694\n",
+            "\n",
+            "Epoch 00100: val_acc did not improve from 0.87283\n"
+          ],
+          "name": "stdout"
+        },
+        {
+          "output_type": "execute_result",
+          "data": {
+            "text/plain": [
+              "<keras.callbacks.History at 0x7fc8a8b82fd0>"
+            ]
+          },
+          "metadata": {
+            "tags": []
+          },
+          "execution_count": 32
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "1zF5AbEliKWy",
+        "colab_type": "text"
+      },
+      "source": [
+        "Basic Evaluation"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "Eq44H2xjiWVX",
+        "colab_type": "code",
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 51
+        },
+        "outputId": "4782b2f0-dc2d-453a-f76d-6ee04a75ac26"
+      },
+      "source": [
+        "# load weights\n",
+        "model.load_weights(best_weights_file)\n",
+        "\n",
+        "final_loss, final_acc = model.evaluate([x_test_current, x_test_voltage], y_test, verbose=1)\n",
+        "print(\"Final loss: {0:.6f}, final accuracy: {1:.6f}\".format(final_loss, final_acc))  "
+      ],
+      "execution_count": 33,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "text": [
+            "173/173 [==============================] - 5s 28ms/step\n",
+            "Final loss: 0.754095, final accuracy: 0.872832\n"
+          ],
+          "name": "stdout"
+        }
+      ]
+    },
+    {
+      "cell_type": "markdown",
+      "metadata": {
+        "id": "bEwTOHHLiXX-",
+        "colab_type": "text"
+      },
+      "source": [
+        "Predict\n"
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "jukzUlZbiXj7",
+        "colab_type": "code",
+        "colab": {
+          "base_uri": "https://localhost:8080/",
+          "height": 51
+        },
+        "outputId": "d466bd89-9809-4a74-b6fc-08b3ed9b3ac1"
+      },
+      "source": [
+        "predict_df = pd.read_csv('submission_format.csv', index_col=0)\n",
+        "\n",
+        "predict_df['current_file'] = predict_df.index.map(lambda id: f'test/{id}_c.png')\n",
+        "predict_df['voltage_file'] = predict_df.index.map(lambda id: f'test/{id}_v.png')\n",
+        "\n",
+        "x_test_current = read_spectograms(predict_df.current_file.values, img_rows, img_cols, as_gray, in_channel)\n",
+        "x_test_voltage = read_spectograms(predict_df.voltage_file.values, img_rows, img_cols, as_gray, in_channel)"
+      ],
+      "execution_count": 38,
+      "outputs": [
+        {
+          "output_type": "stream",
+          "text": [
+            "/usr/local/lib/python3.6/dist-packages/skimage/io/_io.py:48: UserWarning: `as_grey` has been deprecated in favor of `as_gray`\n",
+            "  warn('`as_grey` has been deprecated in favor of `as_gray`')\n"
+          ],
+          "name": "stderr"
+        }
+      ]
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "FIR5oCe4ieV9",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        "#get the predictions for the test data\n",
+        "predicted_classes = model.predict([x_test_current, x_test_voltage])\n",
+        "\n",
+        "predict_df.appliance = np.argmax(predicted_classes,axis=1)\n",
+        "\n",
+        "predict_df = predict_df.drop(['current_file', 'voltage_file'], axis=1)\n",
+        "\n",
+        "predict_df.to_csv('submission.csv')\n",
+        "\n",
+        "from google.colab import files\n",
+        "\n",
+        "files.download('submission.csv')"
+      ],
+      "execution_count": 0,
+      "outputs": []
+    },
+    {
+      "cell_type": "code",
+      "metadata": {
+        "id": "v4msPW626Wop",
+        "colab_type": "code",
+        "colab": {}
+      },
+      "source": [
+        ""
+      ],
+      "execution_count": 0,
+      "outputs": []
+    }
+  ]
+}
